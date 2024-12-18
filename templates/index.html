@@ -19,7 +19,7 @@
                 <h1>Welcome to Smart Receipt Manager</h1>
                 <p class="lead">Track your groceries and never miss expiration dates!</p>
                 <a href="{{ url_for('login') }}" class="btn btn-primary btn-lg">
-                    <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" 
+                    <img src="{{ url_for('static', filename='images/google.svg') }}"
                          alt="Google Logo" style="height: 24px; margin-right: 10px;">
                     Login with Google
                 </a>
