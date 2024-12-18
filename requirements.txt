@@ -6,7 +6,7 @@ oauthlib==3.2.2
 requests==2.31.0
 python-dotenv
 azure-ai-formrecognizer==3.3.0
-openai==0.28.0
+openai
 azure-identity==1.15.0
 Pillow==9.5.0
 APScheduler==3.10.4

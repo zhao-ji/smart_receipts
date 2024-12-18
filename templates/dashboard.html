@@ -14,6 +14,12 @@
             <div class="collapse navbar-collapse">
                 <ul class="navbar-nav ms-auto">
                     <li class="nav-item">
+                        <a class="nav-link active" href="{{ url_for('index') }}">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('recipes') }}">Recipes</a>
+                    </li>
+                    <li class="nav-item">
                         <span class="nav-link">Welcome, {{ current_user.name }}</span>
                     </li>
                     <li class="nav-item">
@@ -68,7 +74,27 @@
                                 </div>
                                 <p class="card-text">
                                     <strong>Price:</strong> ${{ "%.2f"|format(item.price) }}<br>
-                                    <strong>Expiry Date:</strong> {{ item.expiry_date.strftime('%Y-%m-%d') if item.expiry_date }}<br>
+                                    {% if item.expiry_date %}
+                                        <strong>Expires:</strong>
+                                        <span class="expiry-date">{{ item.expiry_date.strftime('%Y-%m-%d') }}</span>
+                                        <button class="btn btn-sm btn-link edit-expiry-btn" onclick="showEditExpiry(this, '{{ item.id }}', '{{ item.expiry_date.strftime('%Y-%m-%d') }}')">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                    {% else %}
+                                        <strong>Expires:</strong> Not set
+                                        <button class="btn btn-sm btn-link edit-expiry-btn" onclick="showEditExpiry(this, '{{ item.id }}')">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+                                    {% endif %}
+                                </p>
+                                <form class="edit-expiry-form d-none" action="{{ url_for('update_expiry', item_id=item.id) }}" method="post">
+                                    <div class="input-group mb-2">
+                                        <input type="date" class="form-control form-control-sm" name="expiry_date" required>
+                                        <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                                        <button type="button" class="btn btn-sm btn-secondary" onclick="hideEditExpiry(this)">Cancel</button>
+                                    </div>
+                                </form>
+                                <p class="card-text">
                                     <strong>Calories:</strong> {{ item.calories }} kcal<br>
                                     <strong>Storage:</strong> {{ item.storage_instructions }}<br>
                                     <strong>Notes:</strong> {{ item.notes }}<br>
@@ -99,5 +125,30 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function showEditExpiry(btn, itemId, currentDate) {
+            const card = btn.closest('.card-text');
+            const form = card.nextElementSibling;
+            const dateInput = form.querySelector('input[type="date"]');
+            
+            // 设置当前日期（如果有）
+            if (currentDate) {
+                dateInput.value = currentDate;
+            }
+            
+            // 隐藏显示文本，显示编辑表单
+            card.classList.add('d-none');
+            form.classList.remove('d-none');
+        }
+
+        function hideEditExpiry(btn) {
+            const form = btn.closest('.edit-expiry-form');
+            const card = form.previousElementSibling;
+            
+            // 隐藏编辑表单，显示文本
+            form.classList.add('d-none');
+            card.classList.remove('d-none');
+        }
+    </script>
 </body>
 </html>

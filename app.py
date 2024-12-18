@@ -13,7 +13,7 @@ from config import Config
 from apscheduler.schedulers.background import BackgroundScheduler
 from azure.ai.formrecognizer import DocumentAnalysisClient
 from azure.core.credentials import AzureKeyCredential
-import openai
+from openai import AzureOpenAI
 from pprint import pprint
 
 app = Flask(__name__)
@@ -37,10 +37,11 @@ form_recognizer_client = DocumentAnalysisClient(
 )
 
 # Initialize Azure OpenAI
-openai.api_type = "azure"
-openai.api_base = app.config['AZURE_OPENAI_ENDPOINT']
-openai.api_version = "2023-05-15"
-openai.api_key = app.config['AZURE_OPENAI_KEY']
+openai_client = AzureOpenAI(
+    api_key=app.config['AZURE_OPENAI_KEY'],
+    api_version="2023-05-15",
+    azure_endpoint=app.config['AZURE_OPENAI_ENDPOINT']
+)
 
 # Create upload folder if it doesn't exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
@@ -91,6 +92,7 @@ def load_user(user_id):
 def index():
     if current_user.is_authenticated:
         return render_template('dashboard.html')
+    print(111111111111111)
     return render_template('index.html')
 
 @app.route('/login')
@@ -112,12 +114,12 @@ def login():
 def callback():
     # Get authorization code Google sent back to you
     code = request.args.get("code")
-    
+
     # Find out what URL to hit to get tokens that allow you to ask for
     # things on behalf of a user
     google_provider_cfg = requests.get('https://accounts.google.com/.well-known/openid-configuration').json()
     token_endpoint = google_provider_cfg["token_endpoint"]
-    
+
     # Prepare and send request to get tokens
     token_url, headers, body = client.prepare_token_request(
         token_endpoint,
@@ -134,14 +136,14 @@ def callback():
 
     # Parse the tokens
     client.parse_request_body_response(json.dumps(token_response.json()))
-    
+
     # Now that we have tokens let's find and hit URL
     # from Google that gives you user's profile information,
     # including their Google Profile Image and Email
     userinfo_endpoint = google_provider_cfg["userinfo_endpoint"]
     uri, headers, body = client.add_token(userinfo_endpoint)
     userinfo_response = requests.get(uri, headers=headers, data=body)
-    
+
     # We want to make sure their email is verified.
     # The user authenticated with Google, authorized our
     # app, and now we've verified their email through Google!
@@ -181,25 +183,25 @@ def upload_receipt():
     if 'receipt' not in request.files:
         flash('No file uploaded')
         return redirect(url_for('index'))
-    
+
     file = request.files['receipt']
     if file.filename == '':
         flash('No file selected')
         return redirect(url_for('index'))
-    
+
     # Save the file
     filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
     filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(filepath)
-    
+
     # Create receipt record
     receipt = Receipt(user_id=current_user.id, image_path=filepath)
     db.session.add(receipt)
     db.session.commit()
-    
+
     # Process the receipt (implement this function)
     process_receipt(receipt.id)
-    
+
     flash('Receipt uploaded and processed successfully')
     return redirect(url_for('index'))
 
@@ -212,20 +214,96 @@ def delete_food_item(item_id):
     if receipt.user_id != current_user.id:
         flash('Unauthorized access', 'error')
         return redirect(url_for('index'))
-    
+
     db.session.delete(food_item)
     db.session.commit()
     flash('Food item deleted successfully', 'success')
     return redirect(url_for('index'))
 
+@app.route('/update_expiry/<int:item_id>', methods=['POST'])
+@login_required
+def update_expiry(item_id):
+    food_item = FoodItem.query.get_or_404(item_id)
+    receipt = Receipt.query.get(food_item.receipt_id)
+    
+    # 验证权限
+    if receipt.user_id != current_user.id:
+        flash('Unauthorized access', 'error')
+        return redirect(url_for('index'))
+    
+    try:
+        new_date = request.form.get('expiry_date')
+        if new_date:
+            food_item.expiry_date = datetime.strptime(new_date, '%Y-%m-%d')
+            db.session.commit()
+            flash('Expiration date updated successfully', 'success')
+        else:
+            flash('Invalid date format', 'error')
+    except ValueError:
+        flash('Invalid date format', 'error')
+    
+    return redirect(url_for('index'))
+
+@app.route('/recipes')
+@login_required
+def recipes():
+    # 获取用户的所有食材
+    user_items = FoodItem.query.join(Receipt).filter(Receipt.user_id == current_user.id).all()
+    ingredients = [item.name for item in user_items]
+    
+    # 使用 Azure OpenAI 生成菜谱推荐
+    prompt = f"""Based on these ingredients: {', '.join(ingredients)}
+    Suggest 5 recipes in JSON format. For each recipe, list required ingredients and mark which ones are missing from the user's ingredients.
+    Format:
+    {{
+        "recipes": [
+            {{
+                "name": "Recipe Name",
+                "description": "Brief description",
+                "cooking_time": "30 mins",
+                "difficulty": "Easy/Medium/Hard",
+                "ingredients": [
+                    {{"name": "ingredient1", "amount": "100g", "have": true}},
+                    {{"name": "ingredient2", "amount": "2 tbsp", "have": false}}
+                ],
+                "instructions": ["step 1", "step 2", "step 3"]
+            }}
+        ]
+    }}
+    """
+    
+    try:
+        response = openai_client.chat.completions.create(
+            model=app.config['AZURE_OPENAI_DEPLOYMENT'],
+            messages=[
+                {"role": "system", "content": "You are a helpful chef who suggests recipes based on available ingredients."},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        
+        content = response.choices[0].message.content
+        if content.startswith('```'):
+            content = content.split('```')[1]
+            if content.startswith('json'):
+                content = content[4:]
+        content = content.strip()
+        
+        recipes = json.loads(content).get('recipes', [])
+        return render_template('recipes.html', recipes=recipes, ingredients=ingredients)
+        
+    except Exception as e:
+        app.logger.error(f"Error generating recipes: {str(e)}")
+        flash('Error generating recipes. Please try again later.', 'error')
+        return redirect(url_for('index'))
+
 def process_receipt(receipt_id):
     receipt = Receipt.query.get(receipt_id)
-    
+
     # Use Azure Form Recognizer to extract items
     with open(receipt.image_path, "rb") as f:
         poller = form_recognizer_client.begin_analyze_document("prebuilt-receipt", f)
     result = poller.result()
-    
+
     # Extract items from the receipt
     if result.documents:
         doc = result.documents[0]
@@ -235,10 +313,10 @@ def process_receipt(receipt_id):
                 # 获取商品名称和价格
                 description = item.value.get("Description").value if item.value.get("Description") else "Unknown Item"
                 total_price = float(item.value.get("TotalPrice").value) if item.value.get("TotalPrice") else 0.0
-                
+
                 # Process each item with Azure OpenAI
                 food_info = get_food_info(description)
-                
+
                 food_item = FoodItem(
                     receipt_id=receipt_id,
                     name=description,
@@ -250,7 +328,7 @@ def process_receipt(receipt_id):
                 )
                 food_item.set_recipes(food_info.get('recipes', []))
                 db.session.add(food_item)
-    
+
     db.session.commit()
 
 def get_food_info(food_name):
@@ -264,14 +342,8 @@ def get_food_info(food_name):
         "recipes": ["recipe suggestion 1", "recipe suggestion 2"]
     }}"""
     
-    # 配置 OpenAI
-    openai.api_type = "azure"
-    openai.api_base = app.config['AZURE_OPENAI_ENDPOINT']
-    openai.api_version = "2023-05-15"
-    openai.api_key = app.config['AZURE_OPENAI_KEY']
-    
-    response = openai.ChatCompletion.create(
-        engine=app.config['AZURE_OPENAI_DEPLOYMENT'],
+    response = openai_client.chat.completions.create(
+        model=app.config['AZURE_OPENAI_DEPLOYMENT'],
         messages=[
             {"role": "system", "content": "You are a helpful food expert. Respond with JSON exactly matching the format specified, using the exact same field names."},
             {"role": "user", "content": prompt}
@@ -292,7 +364,6 @@ def get_food_info(food_name):
         if isinstance(food_info.get('expiry_date'), str):
             try:
                 # 将文本描述转换为实际日期
-                from datetime import datetime, timedelta
                 expiry_text = food_info['expiry_date'].lower()
                 days = 0
                 if 'day' in expiry_text:
