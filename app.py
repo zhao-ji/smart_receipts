@@ -264,14 +264,14 @@ def get_food_info(food_name):
         "recipes": ["recipe suggestion 1", "recipe suggestion 2"]
     }}"""
     
-    client = openai.AzureOpenAI(
-        api_key=app.config['AZURE_OPENAI_KEY'],
-        api_version="2023-05-15",
-        azure_endpoint=app.config['AZURE_OPENAI_ENDPOINT']
-    )
+    # 配置 OpenAI
+    openai.api_type = "azure"
+    openai.api_base = app.config['AZURE_OPENAI_ENDPOINT']
+    openai.api_version = "2023-05-15"
+    openai.api_key = app.config['AZURE_OPENAI_KEY']
     
-    response = client.chat.completions.create(
-        model=app.config['AZURE_OPENAI_DEPLOYMENT'],
+    response = openai.ChatCompletion.create(
+        engine=app.config['AZURE_OPENAI_DEPLOYMENT'],
         messages=[
             {"role": "system", "content": "You are a helpful food expert. Respond with JSON exactly matching the format specified, using the exact same field names."},
             {"role": "user", "content": prompt}
